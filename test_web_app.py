@@ -52,6 +52,7 @@ def test_generate_returns_one_archive_for_pooled_csvs():
     with zipfile.ZipFile(BytesIO(response.content)) as archive:
         names=archive.namelist()
         assert len(names)==2
-        assert any(name.endswith(".xlsx") for name in names)
+        workbook_name=next(name for name in names if name.endswith(".xlsx"))
+        assert "xl/media/image1.png" in zipfile.ZipFile(BytesIO(archive.read(workbook_name))).namelist()
         assert any(name.endswith(".docx") for name in names)
         assert b"PrivateFirst" not in b"".join(archive.read(name) for name in names)
