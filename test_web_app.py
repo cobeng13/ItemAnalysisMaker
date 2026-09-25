@@ -24,6 +24,7 @@ def _zip_csv(item_count, attempts):
 def test_homepage_renders_multi_csv_form():
     response=client.get("/")
     assert response.status_code==200
+    assert 'href="/static/style.css"' in response.text
     assert 'name="files"' in response.text
     assert "multiple" in response.text
     assert "same item count" in response.text
