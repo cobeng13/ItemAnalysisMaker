@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ItemAnalysisMaker</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <main class="card">
+    <header>
+      <h1>ItemAnalysisMaker</h1>
+      <p>Combine class assessment exports into one course item analysis.</p>
+    </header>
+    {% if message %}<div class="message {% if is_error %}error{% else %}success{% endif %}" role="status">{{ message }}</div>{% endif %}
+    <form method="post" enctype="multipart/form-data">
+      <section class="metadata">
+        <label>Exam type
+          <select name="exam_type">{% for choice in exam_types %}<option value="{{ choice }}" {% if values.get('exam_type','Prelims') == choice %}selected{% endif %}>{{ choice }}</option>{% endfor %}</select>
+        </label>
+        <label>Academic year<input name="academic_year" value="{{ values.get('academic_year','') }}" placeholder="2026-2027"></label>
+        <label>Semester
+          <select name="semester">{% for choice in semesters %}<option value="{{ choice }}" {% if values.get('semester','1st Sem') == choice %}selected{% endif %}>{{ choice }}</option>{% endfor %}</select>
+        </label>
+        <label>Subject<input name="subject" value="{{ values.get('subject','') }}" required></label>
+        <label class="wide">Description<input name="description" value="{{ values.get('description','') }}"></label>
+        <label>Prepared by<input name="prepared_by" value="{{ values.get('prepared_by','') }}"></label>
+        <label>Department Chairperson<input name="department_chairperson" value="{{ values.get('department_chairperson','') }}"></label>
+      </section>
+      <label class="block upload">Class LMS / ZipGrade CSV files
+        <input type="file" name="files" accept=".csv,text/csv" multiple required>
+      </label>
+      <p class="hint">Select every class export for the same course. Responses are pooled for one high/low selection and one output pair. All files must have the same item count. Combined input limit: 20 MB.</p>
+      <div class="actions">
+        <button formaction="/validate" formnovalidate class="secondary">Validate files</button>
+        <button formaction="/generate">Generate course analysis</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
