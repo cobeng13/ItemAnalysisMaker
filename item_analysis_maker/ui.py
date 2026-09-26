@@ -4,14 +4,15 @@ from pathlib import Path
 from .analysis import analyze,combine_datasets
 from .outputs import generate_outputs
 from .parsing import InputFormatError,parse_csv_batch
+from .programs import PROGRAM_CHAIRS,PROGRAM_LONG_NAMES
 
 class ItemAnalysisApp:
     def __init__(self,root):
-        self.root=root; root.title("Item Analysis Maker"); root.minsize(700,510)
+        self.root=root; root.title("Item Analysis Maker"); root.minsize(700,550)
         self.csv_paths=()
         self.csv=tk.StringVar()
         self.output=tk.StringVar(value=str(Path.home()/"Documents"))
-        self.values={k:tk.StringVar(value=v) for k,v in {"exam_type":"Prelims","academic_year":"","semester":"1st Sem","subject":"","description":"","prepared_by":"","department_chairperson":""}.items()}
+        self.values={k:tk.StringVar(value=v) for k,v in {"exam_type":"Prelims","academic_year":"","semester":"1st Sem","subject":"","program":"","description":"","prepared_by":"","department_chairperson":""}.items()}
         self._build()
     def _build(self):
         f=ttk.Frame(self.root,padding=18); f.grid(sticky="nsew")
@@ -25,16 +26,31 @@ class ItemAnalysisApp:
         ttk.Button(f,text="Browse...",command=self._choose_output).grid(row=2,column=2)
         ttk.Separator(f).grid(row=3,column=0,columnspan=3,sticky="ew",pady=12)
         r=4
-        for label,key,choices in (("Exam type","exam_type",("Prelims","Midterms","Finals")),("Academic year","academic_year",None),("Semester","semester",("1st Sem","2nd Sem","Term Break")),("Subject","subject",None),("Description","description",None),("Prepared by","prepared_by",None),("Department Chairperson","department_chairperson",None)):
+        for label,key,choices in (("Exam type","exam_type",("Prelims","Midterms","Finals")),("Academic year","academic_year",None),("Semester","semester",("1st Sem","2nd Sem","Term Break")),("Subject","subject",None),("Program","program",tuple(PROGRAM_CHAIRS)),("Description","description",None),("Prepared by","prepared_by",None),("Department Chairperson","department_chairperson",None)):
             ttk.Label(f,text=label).grid(row=r,column=0,sticky="w",pady=4)
-            if choices: ttk.Combobox(f,textvariable=self.values[key],values=choices,state="readonly").grid(row=r,column=1,columnspan=2,sticky="ew",padx=8,pady=4)
+            if choices:
+                widget=ttk.Combobox(f,textvariable=self.values[key],values=choices,state="readonly")
+                widget.grid(row=r,column=1,columnspan=2,sticky="ew",padx=8,pady=4)
+                if key=="program": widget.bind("<<ComboboxSelected>>",self._program_selected)
             else: ttk.Entry(f,textvariable=self.values[key]).grid(row=r,column=1,columnspan=2,sticky="ew",padx=8,pady=4)
             r+=1
+            if key=="program":
+                self.program_long_name=tk.Text(f,height=2,width=56,wrap="word",state="disabled")
+                ttk.Label(f,text="Program Full Name").grid(row=r,column=0,sticky="w",pady=4)
+                self.program_long_name.grid(row=r,column=1,columnspan=2,sticky="ew",padx=8,pady=4)
+                r+=1
         ttk.Separator(f).grid(row=r,column=0,columnspan=3,sticky="ew",pady=12); r+=1
         ttk.Button(f,text="Analyze CSVs",command=self._preview).grid(row=r,column=0,sticky="w")
         ttk.Button(f,text="Generate course analysis",command=self._generate).grid(row=r,column=1,sticky="w",padx=8)
         self.status=ttk.Label(f,text="Choose one or more LMS or ZipGrade CSVs for the same course. Responses are pooled for one analysis.",wraplength=620)
         self.status.grid(row=r+1,column=0,columnspan=3,sticky="w",pady=(12,0))
+    def _program_selected(self,_event=None):
+        program=self.values["program"].get()
+        self.values["department_chairperson"].set(PROGRAM_CHAIRS.get(program,""))
+        self.program_long_name.configure(state="normal")
+        self.program_long_name.delete("1.0","end")
+        self.program_long_name.insert("1.0",PROGRAM_LONG_NAMES.get(program,""))
+        self.program_long_name.configure(state="disabled")
     def _choose_csv(self):
         paths=filedialog.askopenfilenames(title="Choose class LMS or ZipGrade CSV files",filetypes=[("CSV files","*.csv")])
         if paths:
@@ -64,6 +80,8 @@ class ItemAnalysisApp:
             if not self.values["subject"].get().strip(): raise ValueError("Enter a subject.")
             if not self.output.get().strip(): raise ValueError("Choose an output folder.")
             metadata={k:v.get().strip() for k,v in self.values.items()}
+            if metadata["program"] and not metadata["department_chairperson"]:
+                metadata["department_chairperson"]=PROGRAM_CHAIRS[metadata["program"]]
             template=Path(__file__).resolve().parents[1]/"ITEM_ANALYSIS_FORMAT.xlsx"
             from .outputs import output_paths
             xlsx,docx=output_paths(self.output.get(),metadata)

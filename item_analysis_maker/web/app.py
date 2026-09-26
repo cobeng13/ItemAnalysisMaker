@@ -14,6 +14,7 @@ from starlette.background import BackgroundTask
 from ..analysis import analyze, combine_datasets
 from ..outputs import generate_outputs, safe_part
 from ..parsing import InputFormatError, parse_csv_batch
+from ..programs import PROGRAM_CHAIRS, PROGRAM_LONG_NAMES
 
 WEB_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = WEB_DIR.parents[1]
@@ -49,10 +50,11 @@ def _render(request: Request, *, message: str = "", error: bool = False, values:
     return templates.TemplateResponse(request=request, name="index.html", context={
         "message": message, "is_error": error, "values": values,
         "exam_types": EXAM_TYPES, "semesters": SEMESTERS,
+        "program_chairs": PROGRAM_CHAIRS, "program_long_names": PROGRAM_LONG_NAMES,
     })
 
 
-def _metadata(exam_type, academic_year, semester, subject, description, prepared_by, department_chairperson):
+def _metadata(exam_type, academic_year, semester, subject, description, prepared_by, department_chairperson, program=""):
     if exam_type not in EXAM_TYPES:
         raise ValueError("Choose Prelims, Midterms, or Finals.")
     if semester not in SEMESTERS:
@@ -63,6 +65,7 @@ def _metadata(exam_type, academic_year, semester, subject, description, prepared
         "exam_type": exam_type, "academic_year": academic_year.strip(), "semester": semester,
         "subject": subject.strip(), "description": description.strip(),
         "prepared_by": prepared_by.strip(), "department_chairperson": department_chairperson.strip(),
+        "program": program,
     }
 
 
@@ -113,11 +116,17 @@ async def validate(
     description: str = Form(""),
     prepared_by: str = Form(""),
     department_chairperson: str = Form(""),
+    program: str = Form(""),
 ):
     values = {"exam_type": exam_type, "academic_year": academic_year, "semester": semester,
               "subject": subject, "description": description, "prepared_by": prepared_by,
-              "department_chairperson": department_chairperson}
+              "department_chairperson": department_chairperson, "program": program}
     try:
+        if program and program not in PROGRAM_CHAIRS:
+            raise ValueError("Choose a valid program.")
+        if program and not department_chairperson.strip():
+            department_chairperson = PROGRAM_CHAIRS[program]
+            values["department_chairperson"] = department_chairperson
         _metadata(**values)
         data, labels = await _read_batch(files)
         result = analyze(data)
@@ -145,11 +154,16 @@ async def generate(
     description: str = Form(""),
     prepared_by: str = Form(""),
     department_chairperson: str = Form(""),
+    program: str = Form(""),
 ):
     temp_dir = None
     try:
+        if program and program not in PROGRAM_CHAIRS:
+            raise ValueError("Choose a valid program.")
+        if program and not department_chairperson.strip():
+            department_chairperson = PROGRAM_CHAIRS[program]
         metadata = _metadata(exam_type, academic_year, semester, subject, description,
-                             prepared_by, department_chairperson)
+                             prepared_by, department_chairperson, program)
         data, labels = await _read_batch(files)
         result = analyze(data)
         if not TEMPLATE_PATH.is_file():
@@ -171,6 +185,7 @@ async def generate(
             "exam_type": exam_type, "academic_year": academic_year, "semester": semester,
             "subject": subject, "description": description, "prepared_by": prepared_by,
             "department_chairperson": department_chairperson,
+            "program": program,
         })
     except Exception:
         if temp_dir is not None:
@@ -179,6 +194,7 @@ async def generate(
             "exam_type": exam_type, "academic_year": academic_year, "semester": semester,
             "subject": subject, "description": description, "prepared_by": prepared_by,
             "department_chairperson": department_chairperson,
+            "program": program,
         })
     finally:
         await _close_uploads(files)

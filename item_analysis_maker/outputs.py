@@ -2,14 +2,18 @@ from pathlib import Path
 from copy import copy
 import re
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches,Pt
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
 from .analysis import Analysis
+from .programs import PROGRAM_LONG_NAMES
 
 class OutputError(RuntimeError): pass
+
+SUMMARY_TEMPLATE = Path(__file__).resolve().parents[1] / "ITEM_ANALYSIS_SUMMARY_FORMAT.docx"
 
 def safe_part(value,fallback):
     return (re.sub(r"[^A-Za-z0-9_-]+","_",value.strip()).strip("_-")[:60] or fallback)
@@ -107,30 +111,129 @@ def _workbook(template,out,analysis,m):
     wb.calculation.fullCalcOnLoad=True; wb.calculation.forceFullCalc=True; wb.calculation.calcMode="auto"
     wb.save(out)
 
+def _replace_span(paragraph,start,end,value):
+    offsets=[]
+    position=0
+    for run in paragraph.runs:
+        offsets.append((position,position+len(run.text)))
+        position+=len(run.text)
+    if not offsets:
+        if start==0 and end==0:
+            paragraph.add_run(value)
+        return
+    first=next((i for i,(_,stop) in enumerate(offsets) if stop>start),len(offsets)-1)
+    last=next((i for i,(_,stop) in enumerate(offsets) if stop>=end),first)
+    first_start=offsets[first][0]
+    last_start=offsets[last][0]
+    first_text=paragraph.runs[first].text[:start-first_start]
+    last_text=paragraph.runs[last].text[end-last_start:]
+    if first==last:
+        paragraph.runs[first].text=first_text+value+last_text
+        return
+    paragraph.runs[first].text=first_text+value
+    for index in range(first+1,last):
+        paragraph.runs[index].text=""
+    paragraph.runs[last].text=last_text
+
+
+def _replace_pattern(paragraph,pattern,value,flags=0):
+    for match in reversed(list(re.finditer(pattern,paragraph.text,flags))):
+        _replace_span(paragraph,match.start(),match.end(),str(value))
+
+
 def _report(path,analysis,m):
-    doc=Document(); section=doc.sections[0]; section.top_margin=Inches(.65); section.bottom_margin=Inches(.65)
-    doc.styles["Normal"].font.name="Arial"; doc.styles["Normal"].font.size=Pt(10)
-    title=doc.add_heading("ITEM ANALYSIS SUMMARY",0); title.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    meta=doc.add_table(rows=0,cols=2); meta.style="Light Shading Accent 1"
-    for label,value in (("Exam",m["exam_type"]),("Academic Year",m["academic_year"]),("Semester",m["semester"]),("Subject",m["subject"]),("Description",m["description"]),("Students analyzed",str(len(analysis.data.records))),("Top group / bottom group",f"{len(analysis.high_group)} / {len(analysis.low_group)}"),("Prepared by",m["prepared_by"]),("Department Chairperson",m["department_chairperson"])):
-        cells=meta.add_row().cells; cells[0].text=label; cells[1].text=value
-    counts={c:sum(x.classification==c for x in analysis.items) for c in ("Good","Marginal","Poor")}
-    doc.add_heading("Summary",level=1)
-    doc.add_paragraph(f"Good: {counts['Good']} items | Marginal: {counts['Marginal']} items | Poor: {counts['Poor']} items")
-    if m.get("class_label"):
-        cells=meta.add_row().cells; cells[0].text="Class / CSV"; cells[1].text=m["class_label"]
-    doc.add_paragraph(f"Difficulty is the average correct rate for the high and low groups. Discrimination is high-group correct rate minus low-group correct rate. Good: >0.20; Marginal: >0.10 through 0.20; Poor: <=0.10. Nominal group size is ceil(27% of {len(analysis.data.records)}) = {analysis.nominal_group_size}; ties at score boundaries are included, subject to a maximum of 16 students in each group.")
+    if not SUMMARY_TEMPLATE.is_file():
+        raise OutputError(f"Word summary template not found: {SUMMARY_TEMPLATE}")
+    doc=Document(SUMMARY_TEMPLATE)
+    total=len(analysis.items)
+    counts={category:sum(item.classification==category for item in analysis.items)
+            for category in ("Good","Marginal","Poor")}
+    percentages={category:(counts[category]/total*100 if total else 0)
+                 for category in counts}
+    if counts["Good"]>total/2:
+        good_opening="Most of the questions were found to be GOOD questions"
+    elif counts["Good"]:
+        good_opening="Some of the questions were found to be GOOD questions"
+    else:
+        good_opening="No questions were found to be GOOD questions"
+    program=m.get("program","")
+    program_name=PROGRAM_LONG_NAMES.get(program,program)
+    exam_names={"Prelims":"preliminary examination","Midterms":"midterm examination",
+                "Finals":"final examination"}
+    number_pattern=r"(?:\{\{number_of_items\}\}|\{\{number_of_items[^}]*\})"
+    for paragraph in doc.paragraphs:
+        _replace_pattern(paragraph,r"Most of the questions were found to be GOOD questions",good_opening)
+        _replace_pattern(paragraph,r"\{\{Program\}\}",program_name)
+        _replace_pattern(paragraph,r"\{\{Subject\}\}",m.get("subject",""))
+        _replace_pattern(paragraph,r"\{\{Prepared_By\}\}",m.get("prepared_by",""))
+        _replace_pattern(paragraph,r"\{\{Department_Chairperson\}\}",m.get("department_chairperson",""))
+        _replace_pattern(paragraph,r"GOOD/"+number_pattern,f"{counts['Good']}/{total}")
+        _replace_pattern(paragraph,r"POOR/"+number_pattern,f"{counts['Poor']}/{total}")
+        _replace_pattern(paragraph,r"\{\{%_poor\}\}",f"{percentages['Poor']:.1f}%")
+        _replace_pattern(paragraph,r"%_GOOD",f"{percentages['Good']:.1f}%")
+        _replace_pattern(paragraph,r"\{\{number_of_marginal\}\}",counts["Marginal"])
+        _replace_pattern(paragraph,number_pattern,total)
+        _replace_pattern(paragraph,r"final examination",exam_names.get(m.get("exam_type"),"examination"),re.I)
+        _replace_pattern(paragraph,r"Department Chair, Biology Program",
+                         f"Department Chair, {program} Program" if program else "Department Chair")
+        _replace_pattern(paragraph,"\u2019", "'")
+
+    details_title=doc.add_paragraph()
+    details_title.paragraph_format.page_break_before=True
+    details_title.paragraph_format.keep_with_next=True
+    title_run=details_title.add_run("ITEM ANALYSIS DETAILS")
+    title_run.bold=True
+    title_run.font.name="Arial"
+    title_run.font.size=Pt(12)
     for category in ("Good","Marginal","Poor"):
-        items=[x for x in analysis.items if x.classification==category]
-        doc.add_heading(f"{category} Items ({len(items)})",level=1)
-        if not items: doc.add_paragraph("None."); continue
-        table=doc.add_table(rows=1,cols=4); table.style="Light Shading Accent 1"
-        for cell,label in zip(table.rows[0].cells,("Item","Difficulty (p)","Discrimination (D)","High / Low Correct")): cell.text=label
+        items=[item for item in analysis.items if item.classification==category]
+        heading=doc.add_paragraph()
+        heading.paragraph_format.keep_with_next=True
+        heading_run=heading.add_run(f"{category} Items ({len(items)})")
+        heading_run.bold=True
+        heading_run.font.name="Arial"
+        heading_run.font.size=Pt(11)
+        if not items:
+            empty=doc.add_paragraph("None.")
+            empty.paragraph_format.keep_with_next=True
+            continue
+        table=doc.add_table(rows=1,cols=3)
+        table.autofit=False
+        borders=OxmlElement("w:tblBorders")
+        for edge in ("top","left","bottom","right","insideH","insideV"):
+            border=OxmlElement(f"w:{edge}")
+            border.set(qn("w:val"),"single")
+            border.set(qn("w:sz"),"4")
+            border.set(qn("w:space"),"0")
+            border.set(qn("w:color"),"808080")
+            borders.append(border)
+        table._tbl.tblPr.append(borders)
+        widths=(Inches(1.0),Inches(2.5),Inches(2.5))
+        for column,width in zip(table.columns,widths):
+            column.width=width
+        headers=("Item","Difficulty (p)","Discrimination (D)")
+        for cell,label in zip(table.rows[0].cells,headers):
+            cell.width=widths[headers.index(label)]
+            cell.text=label
+            for run in cell.paragraphs[0].runs:
+                run.bold=True
+        repeat=OxmlElement("w:tblHeader")
+        repeat.set(qn("w:val"),"true")
+        table.rows[0]._tr.get_or_add_trPr().append(repeat)
         for item in items:
             cells=table.add_row().cells
-            cells[0].text=str(item.number); cells[1].text=f"{item.difficulty:.3f}"; cells[2].text=f"{item.discrimination:.3f}"
-            cells[3].text=f"{item.high_correct}/{len(analysis.high_group)}; {item.low_correct}/{len(analysis.low_group)}"
-    doc.add_paragraph("Student names, email addresses, and other identifying information are not included.")
+            for cell,width,value in zip(cells,widths,(str(item.number),f"{item.difficulty:.3f}",f"{item.discrimination:.3f}")):
+                cell.width=width
+                cell.text=value
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.name="Arial"
+                        run.font.size=Pt(10)
+    for paragraph in doc.paragraphs[21:37]:
+        paragraph.paragraph_format.keep_together=True
+        paragraph.paragraph_format.keep_with_next=True
     doc.save(path)
 
 def output_paths(output_dir,metadata,source_label=None):
@@ -144,6 +247,7 @@ def generate_outputs(template_path,output_dir,analysis,metadata,source_label=Non
     template=Path(template_path)
     if not template.is_file(): raise OutputError(f"Excel template not found: {template}")
     folder=Path(output_dir); folder.mkdir(parents=True,exist_ok=True)
+    if not SUMMARY_TEMPLATE.is_file(): raise OutputError(f"Word summary template not found: {SUMMARY_TEMPLATE}")
     xlsx,docx=output_paths(folder,metadata,source_label)
     _workbook(template,xlsx,analysis,metadata)
     report_metadata=dict(metadata)

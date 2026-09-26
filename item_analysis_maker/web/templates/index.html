@@ -23,6 +23,10 @@
           <select name="semester">{% for choice in semesters %}<option value="{{ choice }}" {% if values.get('semester','1st Sem') == choice %}selected{% endif %}>{{ choice }}</option>{% endfor %}</select>
         </label>
         <label>Subject<input name="subject" value="{{ values.get('subject','') }}" required></label>
+        <label>Program
+          <select name="program"><option value="">Select a program</option>{% for name, chair in program_chairs.items() %}<option value="{{ name }}" {% if values.get('program','') == name %}selected{% endif %}>{{ name }} — {{ chair }}</option>{% endfor %}</select>
+        </label>
+        <label class="wide">Program Full Name<textarea name="program_long_name" id="program-long-name" rows="2" readonly>{{ program_long_names.get(values.get('program',''), '') }}</textarea></label>
         <label class="wide">Description<input name="description" value="{{ values.get('description','') }}"></label>
         <label>Prepared by<input name="prepared_by" value="{{ values.get('prepared_by','') }}"></label>
         <label>Department Chairperson<input name="department_chairperson" value="{{ values.get('department_chairperson','') }}"></label>
@@ -37,5 +41,16 @@
       </div>
     </form>
   </main>
+  <script>
+    const programChairs = {{ program_chairs | tojson }};
+    const programSelect = document.querySelector('select[name="program"]');
+    const chairInput = document.querySelector('input[name="department_chairperson"]');
+    const programName = document.getElementById('program-long-name');
+    const programTitles = {{ program_long_names | tojson }};
+    programSelect.addEventListener('change', () => {
+      chairInput.value = programChairs[programSelect.value] || '';
+      programName.value = programTitles[programSelect.value] || '';
+    });
+  </script>
 </body>
 </html>

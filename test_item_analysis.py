@@ -94,8 +94,18 @@ def test_outputs_are_anonymized_for_lms_and_zipgrade(tmp_path):
         report = Document(docx)
         text = "\n".join(p.text for p in report.paragraphs)
         text += "\n" + "\n".join(c.text for table in report.tables for row in table.rows for c in row.cells)
-        assert all(f"{category} Items" in text for category in ("Good", "Marginal", "Poor"))
+        assert all(any(p.text.startswith(f"{category} Items (") for p in report.paragraphs)
+                   for category in ("Good", "Marginal", "Poor"))
+        assert "GOOD questions (2/2) (100.0%)" in text
+        assert "POOR questions comprised 0.0% (0/2)" in text
+        assert "preliminary examination consists of 2 multiple-choice items" in text
+        assert "Academic Year:" not in text and "Semester:" not in text
+        assert "Students analyzed:" not in text and "High group:" not in text and "Low group:" not in text
+        assert "{{" not in text and "}}" not in text
         assert "PrivateLast" not in text and "private@example.test" not in text
+        assert all(run.font.highlight_color is None for paragraph in report.paragraphs for run in paragraph.runs)
+        assert all(run.font.highlight_color is None for table in report.tables for row in table.rows
+                   for cell in row.cells for paragraph in cell.paragraphs for run in paragraph.runs)
 
 def test_groups_are_capped_and_numbered_continuously(tmp_path):
     analysis = analyze(InputData("ZipGrade", tuple(StudentRecord(1, (True,)) for _ in range(50)), 1, 0))

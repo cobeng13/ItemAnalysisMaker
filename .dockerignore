@@ -6,4 +6,5 @@ Output/
 output/
 *.csv
 *.docx
+!ITEM_ANALYSIS_SUMMARY_FORMAT.docx
 OUTPUT_RESULT_*.xlsx
